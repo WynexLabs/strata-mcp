@@ -1,12 +1,26 @@
 import { StrataApiError } from "./errors.js";
 
 const DEFAULT_BASE_URL = "https://project-strata.wynexlabs.studio";
-const USER_AGENT = "strata-mcp/0.1.0";
+const USER_AGENT = "strata-mcp/0.1.1";
+
+const DEFAULT_TIMEOUT_MS = 15_000;
+const MIN_TIMEOUT_MS = 1_000;
+const MAX_TIMEOUT_MS = 120_000;
+
+const DEFAULT_MAX_BYTES = 512 * 1024; // 512 KiB
+const MIN_MAX_BYTES = 1024;
+const MAX_MAX_BYTES = 8 * 1024 * 1024; // hard ceiling 8 MiB
+
+const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
 
 export interface StrataClientOptions {
   apiKey: string;
   baseUrl?: string;
   fetchImpl?: typeof fetch;
+  /** Per-request timeout in ms. Default 15000. Clamped to [1000, 120000]. */
+  timeoutMs?: number;
+  /** Max response body size in bytes. Default 512 KiB. Clamped to [1024, 8 MiB]. */
+  maxBytes?: number;
 }
 
 export interface StrataV1Envelope<T> {
@@ -19,18 +33,52 @@ export interface StrataV1Envelope<T> {
   error: { code: string; message: string; [k: string]: unknown } | null;
 }
 
+function clamp(n: number, lo: number, hi: number): number {
+  return Math.min(Math.max(n, lo), hi);
+}
+
+function validateBaseUrl(raw: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new Error(`STRATA_API_BASE is not a valid URL: ${raw}`);
+  }
+  const host = parsed.hostname.toLowerCase();
+  const isLocal = LOCAL_HOSTS.has(host);
+  if (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && isLocal)) {
+    throw new Error(
+      `STRATA_API_BASE must use https:// (got ${parsed.protocol}//${host}). ` +
+        `http:// is only allowed for localhost.`,
+    );
+  }
+  return parsed.origin + parsed.pathname.replace(/\/+$/, "");
+}
+
 export class StrataClient {
   private readonly apiKey: string;
   private readonly baseUrl: string;
   private readonly fetchImpl: typeof fetch;
+  private readonly timeoutMs: number;
+  private readonly maxBytes: number;
 
   constructor(opts: StrataClientOptions) {
     if (!opts.apiKey || typeof opts.apiKey !== "string") {
       throw new Error("STRATA_API_KEY is required");
     }
     this.apiKey = opts.apiKey;
-    this.baseUrl = (opts.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
+    this.baseUrl = validateBaseUrl(opts.baseUrl ?? DEFAULT_BASE_URL);
     this.fetchImpl = opts.fetchImpl ?? fetch;
+    this.timeoutMs = clamp(
+      Number.isFinite(opts.timeoutMs) ? (opts.timeoutMs as number) : DEFAULT_TIMEOUT_MS,
+      MIN_TIMEOUT_MS,
+      MAX_TIMEOUT_MS,
+    );
+    this.maxBytes = clamp(
+      Number.isFinite(opts.maxBytes) ? (opts.maxBytes as number) : DEFAULT_MAX_BYTES,
+      MIN_MAX_BYTES,
+      MAX_MAX_BYTES,
+    );
   }
 
   async post<T>(path: string, body: unknown): Promise<T> {
@@ -46,8 +94,16 @@ export class StrataClient {
           accept: "application/json",
         },
         body: JSON.stringify(body),
+        signal: AbortSignal.timeout(this.timeoutMs),
       });
     } catch (err) {
+      if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) {
+        throw new StrataApiError(
+          "TIMEOUT",
+          `Upstream request to ${path} exceeded ${this.timeoutMs}ms.`,
+          0,
+        );
+      }
       throw new StrataApiError(
         "NETWORK_ERROR",
         `Upstream request to ${path} failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -55,7 +111,27 @@ export class StrataClient {
       );
     }
 
-    const text = await res.text();
+    const contentLength = Number(res.headers.get("content-length") ?? "");
+    if (Number.isFinite(contentLength) && contentLength > this.maxBytes) {
+      throw new StrataApiError(
+        "OUTPUT_TOO_LARGE",
+        `Upstream response (${contentLength} bytes) exceeds MCP cap of ${this.maxBytes} bytes.`,
+        res.status,
+      );
+    }
+
+    let text: string;
+    try {
+      text = await this.readCapped(res);
+    } catch (err) {
+      if (err instanceof StrataApiError) throw err;
+      throw new StrataApiError(
+        "NETWORK_ERROR",
+        `Failed to read response body: ${err instanceof Error ? err.message : String(err)}`,
+        res.status,
+      );
+    }
+
     let parsed: StrataV1Envelope<T> | null = null;
     if (text.length > 0) {
       try {
@@ -84,5 +160,39 @@ export class StrataClient {
     }
 
     return parsed.data;
+  }
+
+  private async readCapped(res: Response): Promise<string> {
+    if (!res.body) return res.text();
+    const reader = res.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        if (value) {
+          total += value.byteLength;
+          if (total > this.maxBytes) {
+            try { await reader.cancel(); } catch { /* noop */ }
+            throw new StrataApiError(
+              "OUTPUT_TOO_LARGE",
+              `Upstream response exceeded MCP cap of ${this.maxBytes} bytes (read ${total}+).`,
+              res.status,
+            );
+          }
+          chunks.push(value);
+        }
+      }
+    } finally {
+      try { reader.releaseLock(); } catch { /* noop */ }
+    }
+    const merged = new Uint8Array(total);
+    let offset = 0;
+    for (const c of chunks) {
+      merged.set(c, offset);
+      offset += c.byteLength;
+    }
+    return new TextDecoder("utf-8").decode(merged);
   }
 }

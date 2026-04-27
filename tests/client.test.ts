@@ -146,4 +146,91 @@ describe("StrataClient", () => {
       code: "UPSTREAM_MALFORMED",
     });
   });
+
+  describe("baseUrl validation (v0.1.1)", () => {
+    it("rejects http:// for non-local hosts", () => {
+      expect(
+        () => new StrataClient({ apiKey: "k", baseUrl: "http://api.example.com" }),
+      ).toThrow(/https/);
+    });
+
+    it("allows http:// for localhost (dev)", () => {
+      expect(
+        () => new StrataClient({ apiKey: "k", baseUrl: "http://localhost:3000" }),
+      ).not.toThrow();
+    });
+
+    it("allows http:// for 127.0.0.1 (dev)", () => {
+      expect(
+        () => new StrataClient({ apiKey: "k", baseUrl: "http://127.0.0.1:3000" }),
+      ).not.toThrow();
+    });
+
+    it("rejects malformed baseUrl", () => {
+      expect(
+        () => new StrataClient({ apiKey: "k", baseUrl: "not-a-url" }),
+      ).toThrow(/valid URL/);
+    });
+  });
+
+  describe("timeout (v0.1.1)", () => {
+    it("aborts a slow request and surfaces TIMEOUT", async () => {
+      const fetchImpl = ((_url: RequestInfo | URL, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => {
+            const err = new Error("aborted");
+            err.name = "TimeoutError";
+            reject(err);
+          });
+        })) as typeof fetch;
+      const client = new StrataClient({ apiKey: "k", fetchImpl, timeoutMs: 1000 });
+      await expect(client.post("/api/v1/compute/bond", {})).rejects.toMatchObject({
+        code: "TIMEOUT",
+        httpStatus: 0,
+      });
+    });
+  });
+
+  describe("output cap (v0.1.1)", () => {
+    it("rejects a response whose Content-Length exceeds maxBytes", async () => {
+      const big = "x".repeat(5_000);
+      const fetchImpl = makeFetchMock(
+        () =>
+          new Response(big, {
+            status: 200,
+            headers: { "content-length": String(big.length), "content-type": "application/json" },
+          }),
+      );
+      const client = new StrataClient({ apiKey: "k", fetchImpl, maxBytes: 1024 });
+      await expect(client.post("/api/v1/compute/bond", {})).rejects.toMatchObject({
+        code: "OUTPUT_TOO_LARGE",
+      });
+    });
+
+    it("rejects a streamed response that grows past maxBytes when no Content-Length is set", async () => {
+      const big = JSON.stringify({ data: { x: "y".repeat(5_000) }, meta: null, error: null });
+      const fetchImpl = makeFetchMock(
+        () =>
+          new Response(big, {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+      );
+      const client = new StrataClient({ apiKey: "k", fetchImpl, maxBytes: 1024 });
+      await expect(client.post("/api/v1/compute/bond", {})).rejects.toMatchObject({
+        code: "OUTPUT_TOO_LARGE",
+      });
+    });
+
+    it("clamps maxBytes below the minimum to the floor", async () => {
+      const fetchImpl = makeFetchMock(() =>
+        new Response(JSON.stringify({ data: { ok: true }, meta: null, error: null }), {
+          status: 200,
+        }),
+      );
+      // maxBytes: 1 → clamped to 1024 → 75-ish-byte payload should pass
+      const client = new StrataClient({ apiKey: "k", fetchImpl, maxBytes: 1 });
+      await expect(client.post("/api/v1/compute/bond", {})).resolves.toEqual({ ok: true });
+    });
+  });
 });

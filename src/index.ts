@@ -2,6 +2,12 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { createServer } from "./server.js";
 
+function parsePositiveInt(raw: string | undefined): number | undefined {
+  if (!raw) return undefined;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : undefined;
+}
+
 async function main(): Promise<void> {
   const apiKey = process.env.STRATA_API_KEY;
   if (!apiKey) {
@@ -13,8 +19,16 @@ async function main(): Promise<void> {
   }
 
   const baseUrl = process.env.STRATA_API_BASE?.trim() || undefined;
+  const timeoutMs = parsePositiveInt(process.env.STRATA_API_TIMEOUT_MS);
+  const maxBytes = parsePositiveInt(process.env.STRATA_MAX_BYTES);
 
-  const server = createServer({ apiKey, baseUrl });
+  let server;
+  try {
+    server = createServer({ apiKey, baseUrl, timeoutMs, maxBytes });
+  } catch (err) {
+    process.stderr.write(`strata-mcp: ${err instanceof Error ? err.message : String(err)}\n`);
+    process.exit(1);
+  }
   const transport = new StdioServerTransport();
 
   const shutdown = async (): Promise<void> => {
