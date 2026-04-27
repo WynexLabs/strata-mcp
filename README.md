@@ -6,7 +6,7 @@ The server wraps Strata's public v1 REST API. It does not implement any finance 
 
 ## Status
 
-v0.1.0 — seven tools, stdio transport only.
+v0.1.1 — seven tools, stdio transport only. Adds 15s default request timeout, HTTPS-only baseUrl validation (localhost exempt), and a 512 KiB streamed response cap to keep tool output context-token-safe. See [Environment variables](#environment-variables) for tunables and [Errors](#error-handling) for the new `TIMEOUT` and `OUTPUT_TOO_LARGE` codes.
 
 | Tool | Wraps |
 |---|---|
@@ -60,7 +60,9 @@ Restart Claude Desktop. The seven `strata_*` tools should appear under the MCP m
 | Var | Required | Default | Purpose |
 |---|---|---|---|
 | `STRATA_API_KEY` | yes | — | Bearer token forwarded to Strata's v1 API on every tool call. |
-| `STRATA_API_BASE` | no | `https://project-strata.wynexlabs.studio` | Override for local development against a non-prod Strata deployment. |
+| `STRATA_API_BASE` | no | `https://project-strata.wynexlabs.studio` | Override for local development. Must be `https://`; `http://` is only allowed when the host is `localhost`, `127.0.0.1`, or `::1`. Invalid values fail at startup. |
+| `STRATA_API_TIMEOUT_MS` | no | `15000` | Per-request abort timeout in milliseconds. Clamped to **[1000, 120000]**; values outside this range are silently coerced to the nearest bound. |
+| `STRATA_MAX_BYTES` | no | `524288` (512 KiB) | Cap on response body size. Larger responses are rejected with `OUTPUT_TOO_LARGE` to protect MCP token budgets. Clamped to **[1024, 8388608]** (1 KiB – 8 MiB). |
 
 ## Tools — detail
 
@@ -109,6 +111,16 @@ Upstream caps `numSimulations` at 5,000 per call (values above are silently clam
 ## Error handling
 
 Upstream non-2xx responses surface the v1 error envelope's `error.code` and `error.message` as an `isError: true` tool result. No retries. Rate-limit errors (`RATE_LIMIT_EXCEEDED`, `DAILY_LIMIT_EXCEEDED`) are surfaced verbatim so the MCP client can back off.
+
+Client-side error codes added in v0.1.1:
+
+| Code | When |
+|---|---|
+| `TIMEOUT` | Request exceeded `STRATA_API_TIMEOUT_MS` (default 15s). |
+| `NETWORK_ERROR` | DNS / TCP / TLS failure before any response was received. |
+| `OUTPUT_TOO_LARGE` | Response body would exceed `STRATA_MAX_BYTES` (Content-Length pre-check or streamed-overrun mid-read). |
+| `UPSTREAM_NON_JSON` | HTTP error response with a non-JSON body. |
+| `UPSTREAM_MALFORMED` | 200 OK with a malformed v1 envelope (no `data`, no `error`). |
 
 ## Development
 
