@@ -34,9 +34,10 @@ const inputShape = {
     ),
   scenariosBp: z
     .array(z.number())
+    .max(50)
     .optional()
     .describe(
-      "Yield-change scenarios (basis points) for the scenario grid. Default [-50, -25, 0, 25, 50].",
+      "Yield-change scenarios (basis points) for the scenario grid. Default [-50, -25, 0, 25, 50]. Max 50 values.",
     ),
 } as const;
 

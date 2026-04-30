@@ -28,7 +28,10 @@ export function toolErrorContent(code: string, message: string): ToolTextResult 
 
 export function errorToToolResult(err: unknown): ToolTextResult {
   if (err instanceof StrataApiError) {
-    return toolErrorContent(err.code, err.message);
+    const details = err.details as Record<string, unknown> | undefined;
+    const retryAfter = typeof details?.retryAfter === "number" ? details.retryAfter : undefined;
+    const suffix = retryAfter !== undefined ? ` Retry after ${retryAfter}s.` : "";
+    return toolErrorContent(err.code, `${err.message}${suffix}`);
   }
   if (err instanceof Error) {
     return toolErrorContent("TOOL_ERROR", err.message);

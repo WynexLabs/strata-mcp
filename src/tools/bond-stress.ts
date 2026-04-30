@@ -17,8 +17,9 @@ const inputShape = {
   curvePoints: z
     .array(curvePoint)
     .min(2)
+    .max(30)
     .describe(
-      "Zero curve as an array of {t (years, > 0), zeroPct (percent, continuous compounding)} points. Minimum 2 points.",
+      "Zero curve as an array of {t (years, > 0), zeroPct (percent, continuous compounding)} points. Min 2, max 30.",
     ),
   scenarioIds: z
     .array(z.string())

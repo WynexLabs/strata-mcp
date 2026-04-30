@@ -43,8 +43,19 @@ export function registerBsm(server: McpServer, client: StrataClient): void {
       }
       const { q, ...rest } = parsed.data;
       try {
-        const data = await client.post<unknown>("/api/v1/compute/bsm", { ...rest, delta: q });
-        return toolJsonContent(data);
+        const raw = await client.post<Record<string, unknown>>("/api/v1/compute/bsm", { ...rest, delta: q });
+        // The API uses `delta` as the internal name for the dividend-yield input, which
+        // collides with the option Greek of the same name in `greeks.delta`. Rename the
+        // response field to `dividendYield` so LLM callers aren't ambiguous.
+        if (raw && typeof raw === "object" && raw.inputs && typeof raw.inputs === "object") {
+          const inputs = { ...(raw.inputs as Record<string, unknown>) };
+          if ("delta" in inputs) {
+            inputs.dividendYield = inputs.delta;
+            delete inputs.delta;
+          }
+          return toolJsonContent({ ...raw, inputs });
+        }
+        return toolJsonContent(raw);
       } catch (err) {
         return errorToToolResult(err);
       }

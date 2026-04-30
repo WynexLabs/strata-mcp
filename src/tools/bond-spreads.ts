@@ -8,7 +8,7 @@ const description = `Compute the G-Spread (bond YTM minus interpolated benchmark
 
 Exactly one of ytmPct or cleanPrice must be provided — same as strata_price_bond. The route first solves / applies YTM, then interpolates the benchmark curve at the bond's time-to-maturity.
 
-The response is the full bond analytics output (same as strata_price_bond) plus a gSpreadBp field containing the G-Spread in basis points. Use gSpreadBp for spread analysis; all other fields (price, duration, DV01, etc.) are also present.
+The response is the full bond analytics output (same as strata_price_bond) plus a gSpreadBp field (G-Spread in basis points) and a gSpreadBenchmark object ({ type: "ust" | "ecb-aaa", asOf: string | null }) indicating which benchmark curve was used and when it was last updated. Always check gSpreadBenchmark.type before comparing spreads across bonds with different currencies — USD and EUR G-Spreads reference different benchmarks and are not directly comparable.
 
 v1 scope: G-Spread only. I-Spread (vs swap curve), ASW, and Z-Spread are tracked for v2 (pending structured spreads REST route + reliable trading-grade swap data).`;
 
