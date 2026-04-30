@@ -1,6 +1,6 @@
 {
   "name": "@wynexlabs/strata-mcp",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "MCP (Model Context Protocol) server exposing Strata's numerical finance compute endpoints (bond pricing, BSM + American options, portfolio VaR) as stdio tools for Claude Desktop / Cursor / other MCP clients.",
   "license": "MIT",
   "type": "module",
