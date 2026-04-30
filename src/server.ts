@@ -53,7 +53,7 @@ Authentication: Bearer token in STRATA_API_KEY (sk_strata_live_*). Get a key at 
 
 export function createServer(opts: CreateServerOptions): McpServer {
   const server = new McpServer(
-    { name: "strata-mcp", version: "0.1.1" },
+    { name: "strata-mcp", version: "0.1.3" },
     {
       capabilities: { tools: {} },
       instructions: INSTRUCTIONS,
