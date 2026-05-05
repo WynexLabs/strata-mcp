@@ -3,6 +3,7 @@ import { StrataClient } from "./client.js";
 import { registerPriceBond } from "./tools/price-bond.js";
 import { registerBondSpreads } from "./tools/bond-spreads.js";
 import { registerBondStress } from "./tools/bond-stress.js";
+import { registerBondScenarios } from "./tools/bond-scenarios.js";
 import { registerBondHorizon } from "./tools/bond-horizon.js";
 import { registerBsm } from "./tools/bsm.js";
 import { registerAmericanOption } from "./tools/american-option.js";
@@ -30,8 +31,9 @@ Tool guide
   strata_bond_spreads — Use when you have a YTM and need a spread vs the UST or ECB-AAA government curve.
     Caveat: I-Spread / ASW are deferred. G-Spread for non-USD/EUR currencies falls back to UST and is therefore a cross-currency comparison; treat it as directional.
 
-  strata_bond_stress — Use to reprice a bond under named historical curve scenarios (covid-mar-2020, taper-tantrum-2013, fed-hike-cycle-2022, lehman-2008) plus six non-parallel shifts (steepener / flattener / butterfly variants).
-    Caveat: fed-hike-cycle-2022 calibration is conservative — actual 2022 P&L was worse than the modelled scenario. Use for ordered ranking, not absolute drawdown forecasting.
+  strata_bond_stress — Use to reprice a bond under named historical curve scenarios (covid-mar-2020, taper-tantrum-2013, fed-hike-cycle-2022, lehman-2008) plus six non-parallel shifts (steepener / flattener / butterfly variants). Requires a full zero curve (curvePoints). Caveat: fed-hike-cycle-2022 calibration is conservative — use for ordered ranking, not absolute drawdown forecasting.
+
+  strata_bond_scenarios — Use to run the same 10 named scenarios WITHOUT supplying a curve. No curvePoints needed — the route synthesises a flat zero from ytmPct (or solves it from cleanPrice) and applies bumps. Optionally add creditSpreadBps to lift the base level. Returns per-scenario: newYtm, newPrice, priceChangePct, deltaModDur, pnl, pctNotional. Use this when you only have a YTM/price, not a full term structure.
 
   strata_bond_horizon — Use for carry, roll-down, price, and reinvestment P&L decomposition over a user-supplied horizon.
     Identity: P&L_total = carry + roll + price + reinvestment. Verify before reporting numbers.
@@ -46,14 +48,14 @@ Tool guide
   strata_american_option — Use for American calls/puts via a CRR binomial tree. Returns price + early-exercise boundary per non-terminal step.
     Convergence note: 200 steps is fine for puts. For deep-ITM calls or short-dated calls on dividend-paying underliers, push steps to 500-1000 to converge price; output excludes per-node values regardless of steps.
 
-  strata_portfolio_var — Use for Monte Carlo VaR/CVaR on a multi-asset portfolio. Capped at 5,000 simulations server-side. Returns VaR 95/99, CVaR 95/99, probLoss.
-    Tail estimates at 5k sims are noisy; quote VaR 95 with confidence; treat VaR 99 as indicative.
+  strata_portfolio_var — Use for Monte Carlo VaR/CVaR on a multi-asset portfolio. Capped at 5,000 simulations server-side. Returns VaR 95/99, CVaR 95/99, probLoss, skewness, kurtosis, Sortino, Calmar, max drawdown.
+    Tail estimates at 5k sims are noisy; quote VaR 95 with confidence; treat VaR 99 as indicative. Skewness and kurtosis are portfolio-return distribution statistics useful for Cornish-Fisher adjustments.
 
 Authentication: Bearer token in STRATA_API_KEY (sk_strata_live_*). Get a key at https://project-strata.wynexlabs.studio/account.`;
 
 export function createServer(opts: CreateServerOptions): McpServer {
   const server = new McpServer(
-    { name: "strata-mcp", version: "0.1.3" },
+    { name: "strata-mcp", version: "0.1.4" },
     {
       capabilities: { tools: {} },
       instructions: INSTRUCTIONS,
@@ -71,6 +73,7 @@ export function createServer(opts: CreateServerOptions): McpServer {
   registerPriceBond(server, client);
   registerBondSpreads(server, client);
   registerBondStress(server, client);
+  registerBondScenarios(server, client);
   registerBondHorizon(server, client);
   registerBsm(server, client);
   registerAmericanOption(server, client);
