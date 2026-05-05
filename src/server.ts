@@ -8,6 +8,7 @@ import { registerBondHorizon } from "./tools/bond-horizon.js";
 import { registerBsm } from "./tools/bsm.js";
 import { registerAmericanOption } from "./tools/american-option.js";
 import { registerPortfolioVar } from "./tools/portfolio-var.js";
+import { registerEquityDcf } from "./tools/equity-dcf.js";
 
 export interface CreateServerOptions {
   apiKey: string;
@@ -25,8 +26,10 @@ Use these tools when you need numerical results that LLMs hallucinate at: iterat
 
 Tool guide
 
-  strata_price_bond — Use when pricing or solving the YTM of a fixed-coupon bond. Supply exactly one of ytmPct or cleanPrice. Returns dirty/clean price, accrued, ModDur, MacD, convexity, DV01.
-    Do not use for: floating-rate, zero-coupon, TIPS, callable, or putable bonds (v2 roadmap).
+  strata_price_bond — Use when pricing or solving the YTM of a fixed-coupon bond (including callable/putable). Supply exactly one of ytmPct or cleanPrice. Returns dirty/clean price, accrued, ModDur, MacD, convexity, DV01.
+    For callable bonds: add callSchedule ([{date, price}]) → returns ytcPct, ytwPct, ytwType.
+    For putable bonds: add putSchedule ([{date, price}]) → returns ytpPct.
+    Do not use for: floating-rate, zero-coupon, TIPS.
 
   strata_bond_spreads — Use when you have a YTM and need a spread vs the UST or ECB-AAA government curve.
     Caveat: I-Spread / ASW are deferred. G-Spread for non-USD/EUR currencies falls back to UST and is therefore a cross-currency comparison; treat it as directional.
@@ -48,6 +51,9 @@ Tool guide
   strata_american_option — Use for American calls/puts via a CRR binomial tree. Returns price + early-exercise boundary per non-terminal step.
     Convergence note: 200 steps is fine for puts. For deep-ITM calls or short-dated calls on dividend-paying underliers, push steps to 500-1000 to converge price; output excludes per-node values regardless of steps.
 
+  strata_equity_dcf — Use for 2-stage DCF or Reverse-DCF equity valuation using caller-supplied numbers (manual mode — no upstream market data). Required: baseFCF (trailing FCFF), sharesOutstanding. Optional: waccPct (default 9), terminalGrowthPct (default 2.5), stage1GrowthPct (default 5), netDebt, currentPrice. Add scenarios[] for probability-weighted bull/base/bear and sensitivity{} for a WACC × terminal-growth grid. Use reverseDCF mode to solve for the implied growth rate at the current price.
+    Caveat: this tool never fetches live data; the caller is responsible for supplying correct baseFCF, shares, and WACC. For auto-populated inputs use the REST endpoint directly with a ticker.
+
   strata_portfolio_var — Use for Monte Carlo VaR/CVaR on a multi-asset portfolio. Capped at 5,000 simulations server-side. Returns VaR 95/99, CVaR 95/99, probLoss, skewness, kurtosis, Sortino, Calmar, max drawdown.
     Tail estimates at 5k sims are noisy; quote VaR 95 with confidence; treat VaR 99 as indicative. Skewness and kurtosis are portfolio-return distribution statistics useful for Cornish-Fisher adjustments.
 
@@ -55,7 +61,7 @@ Authentication: Bearer token in STRATA_API_KEY (sk_strata_live_*). Get a key at 
 
 export function createServer(opts: CreateServerOptions): McpServer {
   const server = new McpServer(
-    { name: "strata-mcp", version: "0.1.4" },
+    { name: "strata-mcp", version: "0.1.5" },
     {
       capabilities: { tools: {} },
       instructions: INSTRUCTIONS,
@@ -78,6 +84,7 @@ export function createServer(opts: CreateServerOptions): McpServer {
   registerBsm(server, client);
   registerAmericanOption(server, client);
   registerPortfolioVar(server, client);
+  registerEquityDcf(server, client);
 
   return server;
 }

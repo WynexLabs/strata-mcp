@@ -8,7 +8,13 @@ const description = `Price a fixed-rate coupon bond using Strata's bond analytic
 
 Exactly one of ytmPct or cleanPrice must be provided. Day-count defaults to 30/360 (US corporate).
 
-Note: v1 supports fixed-coupon bonds only. Floating-rate, zero-coupon, TIPS, callable, and putable bonds are tracked for v2.`;
+Callable / putable bonds: supply callSchedule and/or putSchedule as arrays of { date, price } entries. Returns:
+  • ytcPct — minimum Yield-to-Call across all call dates (worst call for the holder)
+  • ytpPct — minimum Yield-to-Put across all put dates
+  • ytwPct — Yield-to-Worst = min(YTM, all YTCs); puts excluded per standard convention
+  • ytwType — "maturity" or "call"
+
+Note: floating-rate, zero-coupon, TIPS are not yet supported.`;
 
 const inputZod = z.object(priceBondInputShape).refine(
   (v) => (v.ytmPct !== undefined) !== (v.cleanPrice !== undefined),
