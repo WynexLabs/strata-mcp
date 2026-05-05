@@ -10,7 +10,7 @@ interface ToolResult {
 }
 
 async function mountClient(fetchImpl: typeof fetch): Promise<Client> {
-  const server = createServer({ apiKey: "test-key", baseUrl: "https://example.test", fetchImpl });
+  const server = createServer({ apiKey: "test-key", baseUrl: "http://localhost:3001", fetchImpl });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: "test-client", version: "0.0.0" }, { capabilities: {} });
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
@@ -77,7 +77,7 @@ describe("strata_price_bond (tool wiring)", () => {
       },
     })) as unknown as ToolResult;
     expect(result.isError).toBeFalsy();
-    expect(capture.url).toBe("https://example.test/api/v1/compute/bond");
+    expect(capture.url).toBe("http://localhost:3001/api/v1/compute/bond");
     expect(capture.body).toMatchObject({ faceValue: 1000, ytmPct: 4.5 });
     expect(result.content[0]?.type).toBe("text");
     const parsed = JSON.parse(result.content[0]!.text) as Record<string, unknown>;

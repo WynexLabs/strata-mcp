@@ -1,43 +1,63 @@
 # @wynexlabs/strata-mcp
 
-MCP (Model Context Protocol) server exposing Strata's numerical finance compute endpoints as tools for MCP clients (Claude Desktop, Cursor, and any other stdio-based MCP client).
+MCP (Model Context Protocol) server exposing Strata's numerical finance compute endpoints as tools — for Claude Code, Claude Desktop, Cursor, Codex CLI, and any other stdio MCP client.
 
-The server wraps Strata's public v1 REST API. It does not implement any finance math itself; it forwards tool calls to `https://project-strata.wynexlabs.studio/api/v1/compute/*` using the user's API key.
+The server wraps Strata's public v1 REST API. All finance math runs server-side; the MCP package forwards tool calls to `https://project-strata.wynexlabs.studio/api/v1/compute/*` using your API key.
 
 ## Status
 
-v0.1.1 — seven tools, stdio transport only. Adds 15s default request timeout, HTTPS-only baseUrl validation (localhost exempt), and a 512 KiB streamed response cap to keep tool output context-token-safe. See [Environment variables](#environment-variables) for tunables and [Errors](#error-handling) for the new `TIMEOUT` and `OUTPUT_TOO_LARGE` codes.
+v0.1.3 — seven tools, stdio transport only. Security hardening: host allowlist on `STRATA_API_BASE`, array input bounds, `retryAfter` surfaced on 429, rate-limit quota logged to stderr, BSM response renames `inputs.dividendYield` (was `inputs.delta`) to avoid collision with the option Greek. ChatGPT/OpenAI section updated for Responses API MCP path.
 
-| Tool | Wraps |
+| Tool | Endpoint |
 |---|---|
 | `strata_price_bond` | `POST /api/v1/compute/bond` |
-| `strata_bond_spreads` | `POST /api/v1/compute/bond?benchmark=ust\|ecb-aaa` |
+| `strata_bond_spreads` | `POST /api/v1/compute/bond` (with benchmark) |
 | `strata_bond_stress` | `POST /api/v1/compute/bond/stress` |
 | `strata_bond_horizon` | `POST /api/v1/compute/bond/horizon` |
 | `strata_bsm` | `POST /api/v1/compute/bsm` |
 | `strata_american_option` | `POST /api/v1/compute/option/american` |
 | `strata_portfolio_var` | `POST /api/v1/compute/var` |
 
-## Prerequisites
+---
 
-- Node.js >= 18.17.
-- A Strata API key. Get one at https://project-strata.wynexlabs.studio/account (API Keys section). Free tier allows 100/day + 10/min; Plus 1000/day + 60/min; Pro 10,000/day + 300/min.
+## Get an API key
 
-## Install
+**[project-strata.wynexlabs.studio/account](https://project-strata.wynexlabs.studio/account)** → API Keys section.
 
-```sh
-npm install -g @wynexlabs/strata-mcp
+Free tier: 100 calls/day · 10/min — no card required.  
+Plus: 1,000/day · 60/min. Pro: 10,000/day · 300/min.
+
+Your key will look like `sk_strata_live_xxxxxxxxxxxxxxxx`.
+
+---
+
+## Setup
+
+### Claude Code (CLI)
+
+The fastest path — one command, works immediately in the current session:
+
+```bash
+claude mcp add --scope user --env STRATA_API_KEY=sk_strata_live_... strata -- npx -y @wynexlabs/strata-mcp
 ```
 
-Or run directly without a global install via `npx`:
+**All flags must come before the server name.** The `--` separates the name from the command.
 
-```sh
-npx @wynexlabs/strata-mcp
+**Scope options:**
+
+| Flag | Where config is stored | Shared? |
+|---|---|---|
+| `--scope user` | `~/.claude.json` (global) | No — your machine only |
+| `--scope project` | `.mcp.json` in project root | Yes — commit it, all teammates get the tools |
+| `--scope local` | `~/.claude.json` for this project path | No |
+
+For a team repo, `--scope project` is recommended — the config travels with the codebase:
+
+```bash
+claude mcp add --scope project --env STRATA_API_KEY=sk_strata_live_... strata -- npx -y @wynexlabs/strata-mcp
 ```
 
-## Configure in Claude Desktop
-
-Add the following to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
+This writes (or updates) `.mcp.json` in the project root:
 
 ```json
 {
@@ -53,84 +73,234 @@ Add the following to `~/Library/Application Support/Claude/claude_desktop_config
 }
 ```
 
-Restart Claude Desktop. The seven `strata_*` tools should appear under the MCP menu.
+> **Note:** Each teammate needs their own API key in the env field, or can set `STRATA_API_KEY` in their shell and remove the `env` block — but Claude Code does not inherit shell env vars automatically, so the `--env` flag is the reliable path.
+
+**Verify it's working** — paste this into a Claude Code session:
+
+```
+call strata_price_bond with faceValue 1000, couponPct 4.5, frequencyPerYear 2,
+settlementDate 2024-01-01, maturityDate 2034-01-01, ytmPct 4.8, dayCountConvention 30/360
+```
+
+You should get back a dirty price, clean price, ModDur, DV01, and convexity in about 1 second.
+
+---
+
+### Claude Desktop
+
+Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
+
+```json
+{
+  "mcpServers": {
+    "strata": {
+      "command": "npx",
+      "args": ["-y", "@wynexlabs/strata-mcp"],
+      "env": {
+        "STRATA_API_KEY": "sk_strata_live_..."
+      }
+    }
+  }
+}
+```
+
+Fully quit and relaunch Claude Desktop. The seven `strata_*` tools appear under the MCP (plug) icon.
+
+> **Windows note:** `npm` must be installed globally for `npx` to resolve from Claude Desktop's restricted PATH. If the tools don't appear, use the full path to `npx.cmd` as the `command` value (e.g. `C:\\Users\\you\\AppData\\Roaming\\npm\\npx.cmd`).
+
+---
+
+### Cursor
+
+**Global** (all projects): `~/.cursor/mcp.json`  
+**Project-level** (committed to repo): `.cursor/mcp.json` in repo root
+
+Same JSON format as Claude Desktop:
+
+```json
+{
+  "mcpServers": {
+    "strata": {
+      "command": "npx",
+      "args": ["-y", "@wynexlabs/strata-mcp"],
+      "env": {
+        "STRATA_API_KEY": "sk_strata_live_..."
+      }
+    }
+  }
+}
+```
+
+Restart Cursor after saving. The outer key must be exactly `"mcpServers"` (case-sensitive) — Cursor silently ignores the file if it's wrong.
+
+> **PATH gotcha:** Cursor uses a restricted PATH. If `npx` works in your terminal but Strata tools don't appear, replace `"npx"` with the absolute path to your `npx` binary: `"/Users/you/.nvm/versions/node/v20.x.x/bin/npx"` (or wherever `which npx` points).
+
+---
+
+### Codex CLI
+
+**Global:** `~/.codex/config.toml`  
+**Project-level:** `.codex/config.toml` in repo root (only works in trusted projects — Codex will prompt you on first use)
+
+```toml
+[mcp_servers.strata]
+command = "npx"
+args = ["-y", "@wynexlabs/strata-mcp"]
+enabled = true
+
+[mcp_servers.strata.env]
+STRATA_API_KEY = "sk_strata_live_..."
+```
+
+No restart needed — MCP servers start per session.
+
+---
+
+### ChatGPT and OpenAI API
+
+ChatGPT and the OpenAI Responses API support **remote** MCP servers over HTTP/SSE — not local stdio processes. There are two paths:
+
+#### Option A — OpenAI Responses API (programmatic)
+
+Pass a remote Strata MCP server as a tool in any Responses API request:
+
+```json
+{
+  "model": "gpt-4o",
+  "tools": [{
+    "type": "mcp",
+    "server_label": "strata",
+    "server_url": "https://mcp.project-strata.wynexlabs.studio/sse/",
+    "allowed_tools": ["strata_price_bond", "strata_bsm", "strata_portfolio_var"],
+    "require_approval": "never"
+  }]
+}
+```
+
+> **Note:** A hosted remote MCP endpoint (`mcp.project-strata.wynexlabs.studio`) is not yet live — contact [wuttipat@wynexlabs.studio](mailto:wuttipat@wynexlabs.studio) to join the waitlist. The stdio package (`@wynexlabs/strata-mcp`) is Claude Code / Claude Desktop / Cursor only.
+
+#### Option B — GPT Action (no remote server needed)
+
+Point a custom GPT directly at Strata's REST API without any MCP server:
+
+1. Open [chat.openai.com](https://chat.openai.com) → Explore GPTs → Create → Configure → Add Action
+2. Paste the Strata OpenAPI schema URL: `https://project-strata.wynexlabs.studio/api/v1/openapi.json`
+3. Set authentication: API Key → Bearer → paste your `sk_strata_live_...` key
+4. Save and test — the GPT can now call `POST /api/v1/compute/bsm`, `/compute/bond`, `/compute/var`, etc.
+
+This covers all seven compute endpoints without any local process or server deployment.
+
+---
 
 ## Environment variables
 
 | Var | Required | Default | Purpose |
 |---|---|---|---|
-| `STRATA_API_KEY` | yes | — | Bearer token forwarded to Strata's v1 API on every tool call. |
-| `STRATA_API_BASE` | no | `https://project-strata.wynexlabs.studio` | Override for local development. Must be `https://`; `http://` is only allowed when the host is `localhost`, `127.0.0.1`, or `::1`. Invalid values fail at startup. |
-| `STRATA_API_TIMEOUT_MS` | no | `15000` | Per-request abort timeout in milliseconds. Clamped to **[1000, 120000]**; values outside this range are silently coerced to the nearest bound. |
-| `STRATA_MAX_BYTES` | no | `524288` (512 KiB) | Cap on response body size. Larger responses are rejected with `OUTPUT_TOO_LARGE` to protect MCP token budgets. Clamped to **[1024, 8388608]** (1 KiB – 8 MiB). |
+| `STRATA_API_KEY` | **yes** | — | Bearer token forwarded to Strata's v1 API on every tool call. Get one at [/account](https://project-strata.wynexlabs.studio/account). |
+| `STRATA_API_BASE` | no | `https://project-strata.wynexlabs.studio` | Override for local development only. Must be `https://`; `http://` is only allowed for localhost / 127.0.0.1 / ::1. Only `project-strata.wynexlabs.studio` is accepted as a remote host — other values are rejected at startup to prevent accidental key exfiltration. |
+| `STRATA_API_TIMEOUT_MS` | no | `15000` | Per-request abort timeout in ms. Clamped to [1000, 120000]. |
+| `STRATA_MAX_BYTES` | no | `524288` (512 KiB) | Max response body size. Clamped to [1024, 8388608]. Larger responses are rejected with `OUTPUT_TOO_LARGE`. |
+
+---
 
 ## Tools — detail
 
 ### `strata_price_bond`
 
-Price a fixed-rate coupon bond. Accepts either `ytmPct` (returns dirty / clean price) or `cleanPrice` (returns solved YTM). Returns accrued interest, modified + Macaulay duration, convexity, and DV01 scaled to the supplied notional.
+Price a fixed-rate coupon bond. Supply exactly one of `ytmPct` (returns dirty/clean price) or `cleanPrice` (returns solved YTM). Returns accrued interest, modified + Macaulay duration, convexity, and DV01 scaled to `notional`.
 
-v1 supports fixed-coupon bonds only. Floating, zero-coupon, TIPS, callable, and putable bonds are planned for v2. Day-count default `30/360`; accepted: `30/360`, `ACT/ACT`, `ACT/360`, `ACT/365F`. Exactly one of `ytmPct` or `cleanPrice` must be provided.
+v1: fixed-coupon bonds only. Floating, zero-coupon, TIPS, callable, putable → v2. Day-count default `30/360`; accepted: `30/360`, `ACT/ACT`, `ACT/360`, `ACT/365F`.
 
 ### `strata_bond_spreads`
 
-Compute the G-Spread (bond YTM minus interpolated benchmark zero rate at the bond's maturity) for a fixed-rate coupon bond. `currency: "USD"` uses the US Treasury zero curve; `currency: "EUR"` uses the ECB AAA euro-area curve.
+G-Spread (bond YTM minus interpolated benchmark zero rate at matching maturity). `currency: "USD"` → UST curve; `currency: "EUR"` → ECB AAA euro-area curve.
 
-The response is the full bond analytics payload (same as `strata_price_bond`) plus a `gSpreadBp` field in basis points. v1 is G-Spread only. I-Spread / ASW / Z-Spread are tracked for v2 pending a structured spreads REST endpoint and trading-grade swap data.
+Response: full bond analytics payload (same as `strata_price_bond`) plus `gSpreadBp` (basis points) and `gSpreadBenchmark: { type, asOf }` — always check `gSpreadBenchmark.type` before comparing spreads across currencies, they reference different benchmarks. v1: G-Spread only; I-Spread / ASW / Z-Spread → v2.
 
 ### `strata_bond_stress`
 
-Reprice a bond under ten named scenarios: four historical (covid-mar-2020, taper-tantrum-2013, fed-hike-cycle-2022, lehman-2008) and six non-parallel (bull/bear steepener, bull/bear flattener, positive/negative butterfly). Returns base dirty price plus per-scenario shifted price, % price change, P&L, and % notional. Caller supplies a zero curve; base price is curve-discounted (not YTM-derived).
+Reprice under ten named scenarios: four historical (`covid-mar-2020`, `taper-tantrum-2013`, `fed-hike-cycle-2022`, `lehman-2008`) and six non-parallel (bull/bear steepener, bull/bear flattener, positive/negative butterfly). Returns base dirty price plus per-scenario shifted price, % change, P&L, % notional. Caller supplies a zero curve (min 2, max 30 points); base price is curve-discounted.
 
-All scenarios are UST-calibrated. Non-USD bonds get directionally-correct shifts but the magnitudes are US-rate-history-based — use for risk direction, not trading.
+All scenarios UST-calibrated. `fed-hike-cycle-2022` is conservative vs actual 2022 drawdown — use for ordered ranking, not absolute forecasting.
 
 ### `strata_bond_horizon`
 
-Decompose a bond's total return over a user-specified horizon into carry + roll-down + price + reinvestment. Also returns a scenario grid of total returns across a yield-change grid (default ±50, ±25, 0 bp).
+Carry + roll-down + price + reinvestment P&L decomposition over a user-specified horizon, plus a scenario grid of total returns across a yield-change grid (default ±50, ±25, 0 bp; max 50 scenarios).
 
-`reinvestmentRatePct` defaults to `activeYtmPct` (market-rate reinvestment). `horizonDate` past maturity is clamped to maturity and reported as held-to-maturity. The decomposition identity (sum of components = total P&L) closes in dirty-price space.
+`reinvestmentRatePct` defaults to `activeYtmPct`. `horizonDate` past maturity is clamped to maturity. The decomposition identity (sum = total P&L) closes in dirty-price space.
 
 ### `strata_bsm`
 
-Price a European option under Black-Scholes-Merton. Returns price + full Greeks (delta, gamma, theta, vega, rho). If `marketPrice` is supplied, additionally solves implied volatility.
+Price a European option under Black-Scholes-Merton. Returns price + full Greeks (delta, gamma, theta, vega, rho). Supply `marketPrice` to additionally solve implied volatility.
 
-All rates / vols are decimals (e.g. `0.05` for 5%). `T` is in years. Continuous dividend yield `q` defaults to 0.
+All rates/vols are decimals (e.g. `0.05` for 5%). `T` is in years. Continuous dividend yield `q` defaults to 0.
+
+Greeks scaling (matches Strata UI): theta is per-day (÷365 applied); vega and rho are per 1% move (×0.01 applied). Do not scale them again.
+
+The response includes `inputs.dividendYield` (the `q` you supplied) alongside `greeks.delta` (the option delta). These are different quantities — `dividendYield` is the continuous yield on the underlying; `greeks.delta` is ∂Price/∂S.
 
 ### `strata_american_option`
 
-Price an American call or put via Cox-Ross-Rubinstein binomial tree. Returns the price plus the early-exercise boundary (S*) per non-terminal time step. Per-node tree values are deliberately omitted — a 1000-step tree has ~500k nodes, which blows past MCP payload budgets.
+American call/put via Cox-Ross-Rubinstein binomial tree. Returns price + early-exercise boundary per non-terminal step. `steps` ∈ [1, 1000], default 200. Per-node tree values are omitted (a 1000-step tree has ~500k nodes).
 
-`steps` is an integer in [1, 1000], default 200. Continuous dividend yield `q` defaults to 0.
+Convergence note: 200 steps is sufficient for most puts. For deep-ITM calls or short-dated calls on dividend-paying underliers, use 500–1000 steps.
 
 ### `strata_portfolio_var`
 
-Run a Monte Carlo portfolio simulation under correlated returns (normal or Student-t) and return VaR 95/99, CVaR, probability of loss, and distribution summary.
+Monte Carlo VaR/CVaR on a multi-asset portfolio under correlated returns (normal or Student-t). Returns VaR 95/99, CVaR 95/99, probLoss, distribution summary.
 
-Upstream caps `numSimulations` at 5,000 per call (values above are silently clamped). `horizonMonths` ∈ [1, 120]. `weights` must sum to 1.0 (± 0.01). `covarianceMatrix` is N×N where N = `weights.length`. `distributionType` default `"normal"`; Student-t `degreesOfFreedom` default 5.
+`numSimulations` capped at 5,000 server-side. `horizonMonths` ∈ [1, 120]. `weights` must sum to 1.0 (±0.01). `covarianceMatrix` is N×N (max 50×50). VaR 99 at 5k sims is noisy — quote with confidence intervals.
+
+---
 
 ## Error handling
 
-Upstream non-2xx responses surface the v1 error envelope's `error.code` and `error.message` as an `isError: true` tool result. No retries. Rate-limit errors (`RATE_LIMIT_EXCEEDED`, `DAILY_LIMIT_EXCEEDED`) are surfaced verbatim so the MCP client can back off.
-
-Client-side error codes added in v0.1.1:
+Non-2xx responses surface the v1 error envelope's `code` and `message` as `isError: true` tool results. Rate-limit errors include a `retryAfter` value in seconds.
 
 | Code | When |
 |---|---|
+| `RATE_LIMIT_DAILY` | Daily quota exhausted. Check remaining quota in stderr logs. |
+| `RATE_LIMIT_MINUTE` | Per-minute quota hit. `retryAfter` indicates seconds to wait. |
+| `INVALID_KEY` | `STRATA_API_KEY` not recognised. Get a new key at [/account](https://project-strata.wynexlabs.studio/account). |
 | `TIMEOUT` | Request exceeded `STRATA_API_TIMEOUT_MS` (default 15s). |
-| `NETWORK_ERROR` | DNS / TCP / TLS failure before any response was received. |
-| `OUTPUT_TOO_LARGE` | Response body would exceed `STRATA_MAX_BYTES` (Content-Length pre-check or streamed-overrun mid-read). |
-| `UPSTREAM_NON_JSON` | HTTP error response with a non-JSON body. |
-| `UPSTREAM_MALFORMED` | 200 OK with a malformed v1 envelope (no `data`, no `error`). |
+| `NETWORK_ERROR` | DNS / TCP / TLS failure before any response. |
+| `OUTPUT_TOO_LARGE` | Response exceeds `STRATA_MAX_BYTES`. Increase the cap or reduce input complexity. |
+| `UPSTREAM_NON_JSON` | Upstream returned a non-JSON body (details logged to stderr only). |
+| `UPSTREAM_MALFORMED` | 200 OK with a malformed v1 envelope. |
+
+Remaining daily and per-minute quota is written to stderr on every successful call — useful for agent operators monitoring headroom.
+
+---
+
+## Troubleshooting
+
+**Tools don't appear in Claude Desktop / Cursor**
+1. Fully quit the app (not just close the window) and relaunch.
+2. Check the config file is valid JSON — a single trailing comma or missing brace silently breaks the entire file.
+3. Confirm `npx` is on the app's PATH (see platform-specific note above).
+
+**`strata-mcp: STRATA_API_KEY environment variable is required`**
+The key isn't reaching the process. In Claude Desktop / Cursor, the `env` block in the config file is the only reliable way — shell env vars are not inherited. In Claude Code, re-run `claude mcp add` with `--env STRATA_API_KEY=sk_strata_live_...`.
+
+**`INVALID_KEY` error on every tool call**
+Make sure you're using a live key (`sk_strata_live_...`) not a test or placeholder value. Get one at [project-strata.wynexlabs.studio/account](https://project-strata.wynexlabs.studio/account).
+
+**`STRATA_API_BASE host '...' is not an allowed Strata endpoint`**
+Remove the `STRATA_API_BASE` env var — it's for local development only. The default (`project-strata.wynexlabs.studio`) is used when the var is absent.
+
+**Rate limit hit (`RATE_LIMIT_DAILY`)**
+Free tier is 100 calls/day. Upgrade at [/pricing](https://project-strata.wynexlabs.studio/pricing) for 1k/day (Plus) or 10k/day (Pro), or add credit packs at [/developers/pricing](https://project-strata.wynexlabs.studio/developers/pricing) for PAYG access without a subscription.
+
+---
 
 ## Development
 
 ```sh
 npm install
 npm run typecheck   # tsc --noEmit
-npm run test:run    # vitest (client tests + 7-tool registration + per-tool upstream round-trip via InMemoryTransport)
-npm run smoke       # build + spawn the stdio server, run initialize / tools/list / tools/call
-npm run dev         # run src/index.ts with tsx (requires STRATA_API_KEY env)
-npm run build       # tsc build into dist/
+npm run test:run    # vitest (34 tests)
+npm run build       # tsc → dist/
+npm run dev         # run src/index.ts with tsx (requires STRATA_API_KEY)
 ```
 
 ## Architecture
@@ -138,19 +308,19 @@ npm run build       # tsc build into dist/
 ```
 src/
   index.ts              # CLI entry: reads env, wires StdioServerTransport
-  server.ts             # createServer(): McpServer + register all 7 tools
-  client.ts             # StrataClient: fetch wrapper, Bearer auth, envelope unwrap
+  server.ts             # createServer(): McpServer + INSTRUCTIONS + registers all 7 tools
+  client.ts             # StrataClient: fetch, Bearer auth, host allowlist, envelope unwrap
   errors.ts             # StrataApiError
-  schemas/bond.ts       # shared Zod shapes (priceBondInputShape, bondCoreInputShape, curvePoint)
+  schemas/bond.ts       # shared Zod shapes
   tools/
-    price-bond.ts       # strata_price_bond
-    bond-spreads.ts     # strata_bond_spreads
-    bond-stress.ts      # strata_bond_stress
-    bond-horizon.ts     # strata_bond_horizon
-    bsm.ts              # strata_bsm
-    american-option.ts  # strata_american_option
-    portfolio-var.ts    # strata_portfolio_var
-    helpers.ts          # CallToolResult formatters + error → tool-result mapping
+    price-bond.ts
+    bond-spreads.ts
+    bond-stress.ts
+    bond-horizon.ts
+    bsm.ts
+    american-option.ts
+    portfolio-var.ts
+    helpers.ts          # toolJsonContent, toolErrorContent, errorToToolResult
 ```
 
 ## License

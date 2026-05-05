@@ -12,6 +12,7 @@ const MIN_MAX_BYTES = 1024;
 const MAX_MAX_BYTES = 8 * 1024 * 1024; // hard ceiling 8 MiB
 
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
+const ALLOWED_REMOTE_HOSTS = new Set(["project-strata.wynexlabs.studio"]);
 
 export interface StrataClientOptions {
   apiKey: string;
@@ -50,6 +51,12 @@ function validateBaseUrl(raw: string): string {
     throw new Error(
       `STRATA_API_BASE must use https:// (got ${parsed.protocol}//${host}). ` +
         `http:// is only allowed for localhost.`,
+    );
+  }
+  if (!isLocal && !ALLOWED_REMOTE_HOSTS.has(host)) {
+    throw new Error(
+      `STRATA_API_BASE host '${host}' is not an allowed Strata endpoint. ` +
+        `Remove STRATA_API_BASE to use the default (project-strata.wynexlabs.studio).`,
     );
   }
   return parsed.origin + parsed.pathname.replace(/\/+$/, "");
@@ -137,9 +144,13 @@ export class StrataClient {
       try {
         parsed = JSON.parse(text) as StrataV1Envelope<T>;
       } catch {
+        // Log the raw fragment to stderr only — never surface it to the MCP client.
+        process.stderr.write(
+          `strata-mcp: non-JSON upstream body (HTTP ${res.status}): ${text.slice(0, 200)}\n`,
+        );
         throw new StrataApiError(
           "UPSTREAM_NON_JSON",
-          `Upstream returned non-JSON body (HTTP ${res.status}): ${text.slice(0, 200)}`,
+          `Upstream returned a non-JSON response (HTTP ${res.status}). Check your API key and network connectivity.`,
           res.status,
         );
       }
@@ -156,6 +167,15 @@ export class StrataClient {
         parsed?.error?.code ?? "UPSTREAM_MALFORMED",
         parsed?.error?.message ?? "Upstream response missing data.",
         res.status,
+      );
+    }
+
+    // Emit remaining quota to stderr so agent operators can monitor headroom.
+    const dailyRemaining = res.headers.get("x-ratelimit-daily-remaining");
+    const minuteRemaining = res.headers.get("x-ratelimit-minute-remaining");
+    if (dailyRemaining !== null || minuteRemaining !== null) {
+      process.stderr.write(
+        `strata-mcp: quota remaining — daily: ${dailyRemaining ?? "?"}, minute: ${minuteRemaining ?? "?"}\n`,
       );
     }
 

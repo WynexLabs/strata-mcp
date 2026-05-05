@@ -13,7 +13,7 @@ async function mountClient(
 ): Promise<{ client: Client; close: () => Promise<void> }> {
   const server = createServer({
     apiKey: "test-key",
-    baseUrl: "https://example.test",
+    baseUrl: "http://localhost:3001",
     fetchImpl,
   });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -187,7 +187,7 @@ describe("Tool upstream routing (all 7)", () => {
       })) as unknown as { isError?: boolean; content: Array<{ text: string }> };
       expect(result.isError).toBeFalsy();
       expect(capture.length).toBe(1);
-      expect(capture[0]?.url).toBe(`https://example.test${c.expectedPath}`);
+      expect(capture[0]?.url).toBe(`http://localhost:3001${c.expectedPath}`);
       if (c.expectBody) c.expectBody(capture[0]!.body as Record<string, unknown>);
       const parsed = JSON.parse(result.content[0]!.text) as { _mockEcho: boolean };
       expect(parsed._mockEcho).toBe(true);

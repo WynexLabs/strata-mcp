@@ -12,9 +12,14 @@ export const frequencyPerYear = z
   .union([z.literal(1), z.literal(2), z.literal(4), z.literal(12)])
   .describe("Coupon payments per year: 1 (annual), 2 (semi-annual), 4 (quarterly), 12 (monthly).");
 
+const scheduleEntry = z.object({
+  date: isoDate.describe("Call or put date (YYYY-MM-DD)."),
+  price: z.number().positive().describe("Call or put price per 100 par (e.g. 101 for 101% of par)."),
+});
+
 // Raw Zod shape used as inputSchema on the MCP tool. v1 ships the fixed-coupon
-// subset that /api/v1/compute/bond supports today. Callable / putable / FRN /
-// zero / TIPS are deferred to v2 pending structured-bond REST work.
+// subset that /api/v1/compute/bond supports today. FRN / zero / TIPS are
+// deferred. Callable and putable bonds are supported via callSchedule / putSchedule.
 export const priceBondInputShape = {
   faceValue: z
     .number()
@@ -42,6 +47,20 @@ export const priceBondInputShape = {
     .optional()
     .describe("Position notional used to scale DV01 (defaults to faceValue)."),
   dayCountConvention: dayCountConvention.optional(),
+  callSchedule: z
+    .array(scheduleEntry)
+    .max(30)
+    .optional()
+    .describe(
+      "Optional call schedule for callable bonds. Each entry: { date: YYYY-MM-DD, price: per-100-par }. Returns ytcPct (min YTC), ytwPct, ytwType.",
+    ),
+  putSchedule: z
+    .array(scheduleEntry)
+    .max(30)
+    .optional()
+    .describe(
+      "Optional put schedule for putable bonds. Each entry: { date: YYYY-MM-DD, price: per-100-par }. Returns ytpPct (min YTP). Puts are not included in YTW per standard convention.",
+    ),
 } as const;
 
 /**

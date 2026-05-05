@@ -32,12 +32,12 @@ describe("StrataClient", () => {
     });
     const client = new StrataClient({
       apiKey: "sk_strata_live_abc123",
-      baseUrl: "https://example.test",
+      baseUrl: "http://localhost:3001",
       fetchImpl,
     });
     const data = await client.post<{ echo: boolean }>("/api/v1/compute/bond", { hello: 1 });
     expect(data).toEqual({ echo: true });
-    expect(capturedUrl).toBe("https://example.test/api/v1/compute/bond");
+    expect(capturedUrl).toBe("http://localhost:3001/api/v1/compute/bond");
     expect(capturedAuth).toBe("Bearer sk_strata_live_abc123");
     expect(capturedUa).toMatch(/strata-mcp/);
   });
@@ -53,11 +53,11 @@ describe("StrataClient", () => {
     });
     const client = new StrataClient({
       apiKey: "k",
-      baseUrl: "https://example.test///",
+      baseUrl: "http://localhost:3001///",
       fetchImpl,
     });
     await client.post("/api/v1/compute/bond", {});
-    expect(capturedUrl).toBe("https://example.test/api/v1/compute/bond");
+    expect(capturedUrl).toBe("http://localhost:3001/api/v1/compute/bond");
   });
 
   it("maps upstream v1 error envelope to StrataApiError", async () => {
@@ -170,6 +170,18 @@ describe("StrataClient", () => {
       expect(
         () => new StrataClient({ apiKey: "k", baseUrl: "not-a-url" }),
       ).toThrow(/valid URL/);
+    });
+
+    it("rejects non-allowlisted remote hosts", () => {
+      expect(
+        () => new StrataClient({ apiKey: "k", baseUrl: "https://attacker.example.com" }),
+      ).toThrow(/not an allowed Strata endpoint/);
+    });
+
+    it("allows the canonical prod host", () => {
+      expect(
+        () => new StrataClient({ apiKey: "k", baseUrl: "https://project-strata.wynexlabs.studio" }),
+      ).not.toThrow();
     });
   });
 
