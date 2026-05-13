@@ -4,17 +4,23 @@ import { StrataClient } from "../client.js";
 import { bondCoreInputShape, curvePoint, scheduleEntry } from "../schemas/bond.js";
 import { errorToToolResult, toolErrorContent, toolJsonContent } from "./helpers.js";
 
-const description = `Compute OAS (Option-Adjusted Spread), OAD (option-adjusted duration), and OAC (option-adjusted convexity) for a callable / putable bond. Uses Strata's Black-Derman-Toy lognormal binomial tree calibrated to the supplied zero curve. OAS is solved via bisection so the tree reprices the bond to the supplied market clean price; OAD/OAC are ±25bp finite differences with the tree rebuilt at each bump.
+const description = `Compute OAS (Option-Adjusted Spread), OAD (option-adjusted duration), and OAC (option-adjusted convexity) for a callable / putable bond.
 
-Required: curvePoints (full zero curve), cleanPrice (market dirty/clean reference), and at least one of callSchedule or putSchedule. Optional model knobs: sigma (lognormal short-rate vol, default 0.15), steps (BDT steps, default ceil(ttm/dt) capped at 120), dt (step length in years, default 0.5 = semi).
+Two engines are supported via the 'model' input:
+  • model: "bdt" (default) — Black-Derman-Toy lognormal binomial tree (Black, Derman, Toy 1990). Matches the CFA Level II curriculum and is backward-compatible with all existing callers. Knobs: sigma, steps, dt.
+  • model: "hw1f" — Hull-White 1F trinomial tree (Hull-White 1990, §32.7), φ(t) calibrated to the input curve. Matches what Bloomberg / ICE / MSCI users see for institutional callable bond analytics. Knobs: sigma, alpha (mean reversion), steps, dt.
 
-Returns oasBp, oadDuration, oacConvexity, optionFreeDirtyPrice, optionAdjDirtyPrice, and optionValuePct (the value of the embedded option in price points).
+Both engines: OAS is solved via bisection so the tree reprices the bond to the supplied market clean price; OAD/OAC are ±25bp finite differences with the tree rebuilt at each bump.
 
-Use-when: a bond has embedded calls or puts and a plain Z-spread is misleading (OAS strips option value). Use-when comparing callable corporates against option-free benchmarks.
+Required: curvePoints (full zero curve), cleanPrice (market dirty/clean reference), and at least one of callSchedule or putSchedule. Optional knobs: model ("bdt" | "hw1f", default "bdt"), sigma (short-rate vol, default 0.15), alpha (HW1F mean reversion, default 0.03; ignored under "bdt"), steps (default ceil(ttm/dt) capped at 120), dt (step length in years, default 0.5 = semi).
+
+Returns model (echoed), oasBp, oadDuration, oacConvexity, optionFreeDirtyPrice, optionAdjDirtyPrice, and optionValuePct (the value of the embedded option in price points). The 'modelInputs' block also echoes alpha when model="hw1f".
+
+Use-when: a bond has embedded calls or puts and a plain Z-spread is misleading (OAS strips option value). Use "bdt" for CFA-aligned answers; use "hw1f" to compare against institutional desk OAS.
 
 Do-not-use-when: the bond is option-free — use strata_bond_spreads or strata_price_bond instead. OAS collapses to Z-spread for option-free bullets but the tree machinery is unnecessary overhead.
 
-Caveat: OAC can be negative for callable bonds trading near their call price — that's expected, not a bug. Sigma is a single scalar; this is a single-factor BDT, not a Hull-White two-factor.`;
+Caveat: OAC can be negative for callable bonds trading near their call price — that's expected, not a bug. Both engines are single-factor short-rate models; for two-factor work use a different system.`;
 
 const inputShape = {
   ...bondCoreInputShape,
@@ -42,20 +48,36 @@ const inputShape = {
     .min(0)
     .max(0.6)
     .optional()
-    .describe("Lognormal short-rate volatility for the BDT tree (decimal). Default 0.15."),
+    .describe(
+      "Short-rate volatility (decimal). For model='bdt' this is the lognormal vol of the BDT lattice; for model='hw1f' it is the absolute Gaussian vol σ in dr = (θ(t) − α r) dt + σ dW. Default 0.15.",
+    ),
   steps: z
     .number()
     .int()
     .min(1)
     .max(120)
     .optional()
-    .describe("Number of BDT steps. Default ceil(ttm/dt), capped at 120 to bound compute."),
+    .describe("Number of tree steps (BDT or HW1F). Default ceil(ttm/dt), capped at 120 to bound compute."),
   dt: z
     .number()
     .min(0.0833)
     .max(1)
     .optional()
-    .describe("BDT step length in years. Default 0.5 (semi-annual). Smaller dt → finer grid + more compute."),
+    .describe("Tree step length in years. Default 0.5 (semi-annual). Smaller dt → finer grid + more compute."),
+  model: z
+    .enum(["bdt", "hw1f"])
+    .optional()
+    .describe(
+      "OAS engine. 'bdt' (default) = Black-Derman-Toy lognormal binomial — matches the CFA Level II curriculum and is backward-compatible with all existing callers. 'hw1f' = Hull-White 1F trinomial (Hull-White 1990) — matches Bloomberg/ICE/MSCI institutional benchmarks; consumes the 'alpha' knob.",
+    ),
+  alpha: z
+    .number()
+    .min(0.001)
+    .max(0.5)
+    .optional()
+    .describe(
+      "HW1F mean-reversion speed α in dr = (θ(t) − α r) dt + σ dW. Default 0.03 (Hull-White textbook starting point; common Bloomberg vanilla USD benchmark). Ignored when model='bdt'. Bounded [0.001, 0.5] to keep the trinomial tree's jmax = ceil(0.184/(α·dt)) numerically well-behaved.",
+    ),
 } as const;
 
 const inputZod = z
@@ -72,7 +94,7 @@ export function registerBondOas(server: McpServer, client: StrataClient): void {
   server.registerTool(
     "strata_bond_oas",
     {
-      title: "Bond OAS, OAD, and OAC via BDT binomial tree",
+      title: "Bond OAS, OAD, and OAC via BDT binomial or Hull-White trinomial tree",
       description,
       inputSchema: inputShape,
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true },

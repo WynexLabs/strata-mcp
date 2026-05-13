@@ -123,6 +123,66 @@ describe("strata_bond_oas (tool wiring)", () => {
     await client.close();
   });
 
+  // --- HW1F (model + alpha) schema additions --------------------------------
+
+  it("advertises model and alpha in the tool input schema", async () => {
+    const client = await mountClient(fixedFetch());
+    const list = await client.listTools();
+    const tool = list.tools.find((t) => t.name === "strata_bond_oas");
+    expect(tool).toBeDefined();
+    const props = (tool?.inputSchema as { properties?: Record<string, unknown> }).properties ?? {};
+    expect(Object.keys(props)).toEqual(expect.arrayContaining(["model", "alpha"]));
+    expect(tool?.description).toMatch(/bdt/);
+    expect(tool?.description).toMatch(/hw1f/i);
+    expect(tool?.description).toMatch(/Hull-?White/i);
+    await client.close();
+  });
+
+  it("forwards model='hw1f' and alpha to the v1 route", async () => {
+    const capture: { body?: unknown; url?: string } = {};
+    const client = await mountClient(fixedFetch(capture));
+    const result = (await client.callTool({
+      name: "strata_bond_oas",
+      arguments: { ...validArgs, model: "hw1f", alpha: 0.05 },
+    })) as unknown as ToolResult;
+    expect(result.isError).toBeFalsy();
+    expect(capture.body).toMatchObject({ model: "hw1f", alpha: 0.05 });
+    await client.close();
+  });
+
+  it("rejects model values outside the 'bdt' | 'hw1f' enum at schema layer", async () => {
+    const client = await mountClient(fixedFetch());
+    const result = (await client.callTool({
+      name: "strata_bond_oas",
+      arguments: { ...validArgs, model: "vasicek" },
+    })) as unknown as ToolResult;
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toMatch(/(INVALID_INPUT|Input validation)/);
+    await client.close();
+  });
+
+  it("rejects alpha below 0.001 at schema layer", async () => {
+    const client = await mountClient(fixedFetch());
+    const result = (await client.callTool({
+      name: "strata_bond_oas",
+      arguments: { ...validArgs, model: "hw1f", alpha: 0.0001 },
+    })) as unknown as ToolResult;
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toMatch(/(INVALID_INPUT|Input validation)/);
+    await client.close();
+  });
+
+  it("rejects alpha above 0.5 at schema layer", async () => {
+    const client = await mountClient(fixedFetch());
+    const result = (await client.callTool({
+      name: "strata_bond_oas",
+      arguments: { ...validArgs, model: "hw1f", alpha: 1.0 },
+    })) as unknown as ToolResult;
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toMatch(/(INVALID_INPUT|Input validation)/);
+    await client.close();
+  });
+
   it("surfaces upstream v1 error envelopes as isError tool results", async () => {
     const errFetch: typeof fetch = (async () =>
       new Response(
