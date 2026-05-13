@@ -12,7 +12,7 @@ export const frequencyPerYear = z
   .union([z.literal(1), z.literal(2), z.literal(4), z.literal(12)])
   .describe("Coupon payments per year: 1 (annual), 2 (semi-annual), 4 (quarterly), 12 (monthly).");
 
-const scheduleEntry = z.object({
+export const scheduleEntry = z.object({
   date: isoDate.describe("Call or put date (YYYY-MM-DD)."),
   price: z.number().positive().describe("Call or put price per 100 par (e.g. 101 for 101% of par)."),
 });

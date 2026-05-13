@@ -5,6 +5,8 @@ import { registerBondSpreads } from "./tools/bond-spreads.js";
 import { registerBondStress } from "./tools/bond-stress.js";
 import { registerBondScenarios } from "./tools/bond-scenarios.js";
 import { registerBondHorizon } from "./tools/bond-horizon.js";
+import { registerBondOas } from "./tools/bond-oas.js";
+import { registerBondKrd } from "./tools/bond-krd.js";
 import { registerBsm } from "./tools/bsm.js";
 import { registerAmericanOption } from "./tools/american-option.js";
 import { registerPortfolioVar } from "./tools/portfolio-var.js";
@@ -40,6 +42,11 @@ Tool guide
 
   strata_bond_horizon — Use for carry, roll-down, price, and reinvestment P&L decomposition over a user-supplied horizon.
     Identity: P&L_total = carry + roll + price + reinvestment. Verify before reporting numbers.
+
+  strata_bond_oas — Use for OAS, OAD, and OAC on callable/putable bonds. Requires curvePoints + cleanPrice + at least one of callSchedule/putSchedule. Tunable BDT knobs: sigma (default 0.15), steps (default ceil(ttm/dt), cap 120), dt (default 0.5). Returns oasBp, oadDuration, oacConvexity, optionFreeDirtyPrice, optionAdjDirtyPrice, optionValuePct.
+    Do not use for option-free bullets — OAS collapses to Z-spread there; use strata_bond_spreads instead.
+
+  strata_bond_krd — Use for partial-duration attribution across key tenors on the zero curve. Default tenors [0.5, 2, 5, 10, 30]; pass custom tenors[] (max 12). Returns one entry per bucket with KRD + DV01, plus krdSum and effectiveDuration so the caller can verify the bucket sum approximates parallel-shift duration.
 
   strata_bsm — Use when pricing a European option and reporting full Greeks. If marketPrice is supplied, it also returns implied volatility.
     Greeks scaling convention (matches Strata web UI):
@@ -81,6 +88,8 @@ export function createServer(opts: CreateServerOptions): McpServer {
   registerBondStress(server, client);
   registerBondScenarios(server, client);
   registerBondHorizon(server, client);
+  registerBondOas(server, client);
+  registerBondKrd(server, client);
   registerBsm(server, client);
   registerAmericanOption(server, client);
   registerPortfolioVar(server, client);

@@ -48,10 +48,14 @@ const ALL_TOOLS = [
   "strata_price_bond",
   "strata_bond_spreads",
   "strata_bond_stress",
+  "strata_bond_scenarios",
   "strata_bond_horizon",
+  "strata_bond_oas",
+  "strata_bond_krd",
   "strata_bsm",
   "strata_american_option",
   "strata_portfolio_var",
+  "strata_equity_dcf",
 ];
 
 describe("Tool registration (all 7)", () => {
@@ -149,6 +153,41 @@ describe("Tool upstream routing (all 7)", () => {
         activeYtmPct: 5,
       },
       expectedPath: "/api/v1/compute/bond/horizon",
+    },
+    {
+      tool: "strata_bond_oas",
+      args: {
+        faceValue: 100,
+        couponPct: 5,
+        frequencyPerYear: 2,
+        settlementDate: "2024-01-15",
+        maturityDate: "2029-01-15",
+        cleanPrice: 99,
+        curvePoints: [
+          { t: 1, zeroPct: 5 },
+          { t: 5, zeroPct: 5 },
+          { t: 10, zeroPct: 5 },
+        ],
+        callSchedule: [{ date: "2026-01-15", price: 100 }],
+      },
+      expectedPath: "/api/v1/compute/bond/oas",
+    },
+    {
+      tool: "strata_bond_krd",
+      args: {
+        faceValue: 100,
+        couponPct: 5,
+        frequencyPerYear: 2,
+        settlementDate: "2024-06-15",
+        maturityDate: "2034-06-15",
+        curvePoints: [
+          { t: 1, zeroPct: 4 },
+          { t: 5, zeroPct: 4 },
+          { t: 10, zeroPct: 4 },
+          { t: 30, zeroPct: 4 },
+        ],
+      },
+      expectedPath: "/api/v1/compute/bond/krd",
     },
     {
       tool: "strata_bsm",
