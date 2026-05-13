@@ -3,7 +3,7 @@ import { z } from "zod";
 import { StrataClient } from "../client.js";
 import { errorToToolResult, toolErrorContent, toolJsonContent } from "./helpers.js";
 
-const description = `Run a Monte Carlo portfolio simulation under correlated returns (normal or Student-t) and return Value-at-Risk 95/99, CVaR, probability of loss, and a distribution summary.
+const description = `Run a Monte Carlo portfolio simulation under correlated returns (normal or Student-t) and return Value-at-Risk 95/99, CVaR, probability of loss, distribution moments (skewness, excess kurtosis), and a Cornish-Fisher adjusted 95% VaR (\`varCornishFisher95\`) that corrects the normal quantile for skew/kurt — when the simulated sample is too small (n < 30) the field is null and \`cornishFisherUnavailable: "n<30"\` is returned.
 
 v1 upstream caps numSimulations at 5,000 per call — values above are silently clamped. horizonMonths must be an integer in [1, 120]. weights must sum to 1.0 (±0.01) and covarianceMatrix must be N×N where N = weights.length.
 
